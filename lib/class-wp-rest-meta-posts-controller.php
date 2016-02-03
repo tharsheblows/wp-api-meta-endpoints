@@ -38,6 +38,16 @@ class WP_REST_Meta_Posts_Controller extends WP_REST_Meta_Controller {
 		$this->rest_base = 'meta';
 	}
 
+	public function get_parent_object( $id ){
+
+		$post = get_post( $id );
+		if( empty( $post ) || empty( $post->ID ) ){
+			return new WP_Error( 'rest_post_invalid_id', __( 'Invalid post id.' ), array( 'status' => 404 ) );
+		}
+
+		return $post;
+	}
+
 	/**
 	 * Check if a given request has access to get meta for a post.
 	 *
@@ -52,13 +62,14 @@ class WP_REST_Meta_Posts_Controller extends WP_REST_Meta_Controller {
 		}
 
 		if ( ! $this->parent_controller->check_read_permission( $parent ) ) {
-			return new WP_Error( 'rest_forbidden', __( 'Sorry, you cannot view this post.' ), array( 'status' => rest_authorization_required_code() ) );
+			return new WP_Error( 'rest_forbidden', __( 'Sorry, you cannot view the meta for this post.' ), array( 'status' => rest_authorization_required_code() ) );
 		}
 
 		$post_type = get_post_type_object( $parent->post_type );
-		if ( ! current_user_can( $post_type->cap->edit_post, $parent->ID ) ) {
-			return new WP_Error( 'rest_forbidden', __( 'Sorry, you cannot view the meta for this post.' ), array( 'status' => rest_authorization_required_code() ) );
+		if ( 'edit' === $request['context'] && ! current_user_can( $post_type->cap->edit_post, $parent->ID ) ) {
+			return new WP_Error( 'rest_forbidden_context', __( 'Sorry, you are not allowed to edit post meta in this post type.' ), array( 'status' => rest_authorization_required_code() ) );
 		}
+
 		return true;
 	}
 
@@ -69,7 +80,21 @@ class WP_REST_Meta_Posts_Controller extends WP_REST_Meta_Controller {
 	 * @return WP_Error|boolean
 	 */
 	public function get_item_permissions_check( $request ) {
-		return $this->get_items_permissions_check( $request );
+
+		$parent = get_post( (int) $request['parent_id'] );
+
+		// if there's no post then error
+		if ( empty( $parent ) || empty( $parent->ID ) ) {
+			return new WP_Error( 'rest_post_invalid_id', __( 'Invalid post id.' ), array( 'status' => 404 ) );
+		}
+
+		// if you can't read this post type then error
+		if ( ! $this->parent_controller->check_read_permission( $parent ) ) {
+			return new WP_Error( 'rest_forbidden', __( 'Sorry, you cannot view this post.' ), array( 'status' => rest_authorization_required_code() ) );
+		}
+
+
+		return true;
 	}
 
 	/**
@@ -79,7 +104,26 @@ class WP_REST_Meta_Posts_Controller extends WP_REST_Meta_Controller {
 	 * @return WP_Error|boolean
 	 */
 	public function create_item_permissions_check( $request ) {
-		return $this->get_items_permissions_check( $request );
+		
+		$parent = get_post( (int) $request['parent_id'] );
+
+		// if there's no post then error
+		if ( empty( $parent ) || empty( $parent->ID ) ) {
+			return new WP_Error( 'rest_post_invalid_id', __( 'Invalid post id.' ), array( 'status' => 404 ) );
+		}
+
+		// if you can't read this post type then error
+		if ( ! $this->parent_controller->check_read_permission( $parent ) ) {
+			return new WP_Error( 'rest_forbidden', __( 'Sorry, you cannot view this post.' ), array( 'status' => rest_authorization_required_code() ) );
+		}
+
+		// if this is in the edit context and you can't edit, then error
+		$post_type = get_post_type_object( $parent->post_type );
+		if( ! current_user_can( $post_type->cap->edit_post, $parent->ID ) ){
+			return new WP_Error( 'rest_forbidden_context', __( 'Sorry, you are not allowed to create this post meta.' ), array( 'status' => rest_authorization_required_code() ) );
+		}
+
+		return true;
 	}
 
 	/**
@@ -115,4 +159,28 @@ class WP_REST_Meta_Posts_Controller extends WP_REST_Meta_Controller {
 		}
 		return true;
 	}
+
+	/**
+	 * Check if we can edit the post meta.
+	 *
+	 * @param object $post Post object.
+	 * @return boolean Can we edit it?
+	 */
+	protected function check_update_permission( $meta_data_array ) {
+
+		$post_type = get_post( $meta_data_array['parent_id'] )->post_type;
+
+		if ( ! is_object( $post_type ) ) {
+			$post_type = get_post_type_object( $post_type );
+		}
+
+		if ( ! empty( $post_type ) && ! empty( $post_type->show_in_rest ) ) {
+			return true;
+		}
+
+		return false;
+	}
+
+
+
 }

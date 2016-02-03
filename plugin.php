@@ -27,6 +27,12 @@ function meta_rest_api_init() {
 			$meta_controller->register_routes();
 		}
 	}
+
+	// register users controller
+	
+	// register comments controller
+	
+	// register terms controller
 }
 
 add_action( 'rest_api_init', 'meta_rest_api_init', 11 );

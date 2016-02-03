@@ -29,6 +29,7 @@ abstract class WP_REST_Meta_Controller extends WP_REST_Controller {
 			_doing_it_wrong( 'WP_REST_Meta_Controller::__construct', __( 'The parent base must be overridden' ), 'WPAPI-2.0' );
 			return;
 		}
+
 	}
 
 	/**
@@ -57,7 +58,7 @@ abstract class WP_REST_Meta_Controller extends WP_REST_Controller {
 				'callback'            => array( $this, 'get_item' ),
 				'permission_callback' => array( $this, 'get_item_permissions_check' ),
 				'args'                => array(
-					'context'          => $this->get_context_param( array( 'default' => 'edit' ) ),
+					'context'          => $this->get_context_param( array( 'default' => 'view' ) ),
 				),
 			),
 			array(
@@ -93,19 +94,19 @@ abstract class WP_REST_Meta_Controller extends WP_REST_Controller {
 			'title'      => 'meta',
 			'type'       => 'object',
 			/*
-			 * Base properties for every Post
+			 * Base properties for every meta key.
 			 */
 			'properties' => array(
 				'id' => array(
 					'description' => __( 'Unique identifier for the object.' ),
 					'type'        => 'integer',
-					'context'     => array( 'edit' ),
+					'context'     => array( 'view', 'edit' ),
 					'readonly'    => true,
 				),
 				'key' => array(
 					'description' => __( 'The key for the custom field.' ),
 					'type'        => 'string',
-					'context'     => array( 'edit' ),
+					'context'     => array( 'view', 'edit' ),
 					'required'    => true,
 					'arg_options' => array(
 						'sanitize_callback' => 'sanitize_text_field',
@@ -113,25 +114,14 @@ abstract class WP_REST_Meta_Controller extends WP_REST_Controller {
 				),
 				'value' => array(
 					'description' => __( 'The value of the custom field.' ),
-					'type'        => 'string',
-					'context'     => array( 'edit' ),
+					'type'        => 'string', // @todo this should be the data_type from register_meta
+					'context'     => array( 'view', 'edit' ),
 				),
+
+				//@todo -- add in properties from register_meta here, only in 'view' context
 			),
 		);
-		return $schema;
-	}
-
-	/**
-	 * Get the query params for collections
-	 *
-	 * @return array
-	 */
-	public function get_collection_params() {
-		$params = parent::get_collection_params();
-		$new_params = array();
-		$new_params['context'] = $params['context'];
-		$new_params['context']['default'] = 'edit';
-		return $new_params;
+		return $this->add_additional_fields_schema( $schema ); // @todo see what happens here. If it's bad things, then use $this->get_public_item_schema
 	}
 
 	/**
@@ -140,6 +130,7 @@ abstract class WP_REST_Meta_Controller extends WP_REST_Controller {
 	 * @return string
 	 */
 	protected function get_id_column() {
+
 		return ( 'user' === $this->parent_type ) ? 'umeta_id' : 'meta_id';
 	}
 
@@ -149,7 +140,8 @@ abstract class WP_REST_Meta_Controller extends WP_REST_Controller {
 	 * @return string
 	 */
 	protected function get_parent_column() {
-		return ( 'user' === $this->parent_type ) ? 'user_id' : 'post_id';
+
+		return "{$this->parent_type}_id";
 	}
 
 	/**
@@ -159,27 +151,65 @@ abstract class WP_REST_Meta_Controller extends WP_REST_Controller {
 	 * @return WP_REST_Request|WP_Error List of meta object data on success, WP_Error otherwise
 	 */
 	public function get_items( $request ) {
-		$parent_id = (int) $request['parent_id'];
 
-		global $wpdb;
-		$table = _get_meta_table( $this->parent_type );
+		$parent_id = (int) $request['parent_id'];
+		$parent = $this->get_parent_object( $parent_id );
+
+		$parent_type = $this->parent_post_type;
+
+		if( is_wp_error( $parent) ){
+			return $parent;
+		}
+
 		$parent_column = $this->get_parent_column();
 		$id_column = $this->get_id_column();
 
-		// @codingStandardsIgnoreStart
-		$results = $wpdb->get_results( $wpdb->prepare( "SELECT $id_column, $parent_column, meta_key, meta_value FROM $table WHERE $parent_column = %d", $parent_id ) );
-		// @codingStandardsIgnoreEnd
+		// currently using this patch https://core.trac.wordpress.org/attachment/ticket/35658/35658.diff
+		
+		$registered_keys = get_registered_meta_keys( $this->parent_type, $this->parent_post_type );
+		//error_log( print_r( $registered_keys, true ), 0 );
 
 		$meta = array();
 
-		foreach ( $results as $row ) {
-			$value = $this->prepare_item_for_response( $row, $request, true );
+		foreach ( $registered_keys as $key => $registered_key_data ) {
 
-			if ( is_wp_error( $value ) ) {
+			// get the meta data of the meta key here
+			
+			$single = ( !empty( $registered_key_data['single'] ) ) ? $registered_key_data['single'] : false;
+			$meta_value = get_metadata( $this->parent_type, $parent_id, $key, $single );
+
+			// let's put it all together
+			$meta_data_array = array( 
+				'meta_key' => $key,
+				'parent_id' => $parent_id,
+				'meta_value' => $meta_value, // @todo think this through about single and arrays and serialized data
+				'registered_key_data' => $registered_key_data,
+				'is_raw' => true, // have we checked for serialized data?
+			);
+
+			// if this not the edit context and the meta isn't registered to show in rest then error
+			if( 'edit' !== $request['context'] && ( empty( $registered_key_data ) || empty( $registered_key_data['show_in_rest'] ) ) ){
 				continue;
 			}
 
-			$meta[] = $this->prepare_response_for_collection( $value );
+			$authorization_callback = ( !empty( $registered_key_data[ 'authorization_callback' ] ) && is_callable( $registered_key_data[ 'authorization_callback' ] ) ) ? call_user_func( $registered_key_data[ 'authorization_callback' ] ) : $this->check_update_permission( $meta_data_array );
+
+			if( 'edit' === $request['context']  && ! $authorization_callback ){
+				return new WP_Error( 'rest_forbidden_context', __( 'Sorry, you are not allowed to view the post meta in this context.' ), array( 'status' => rest_authorization_required_code() ) );
+			}
+	
+			if( ! $this->check_read_permission( $meta_data_array ) ){
+				continue;
+			} 
+
+			// hmmm, not sure about forcing an array here but I want it to be an array
+			$response = $this->prepare_item_for_response( $meta_data_array, $request, true );
+
+			if ( is_wp_error( $response ) ) {
+				continue;
+			}
+
+			$meta[] = $this->prepare_response_for_collection( $response );
 		}
 
 		return rest_ensure_response( $meta );
@@ -192,6 +222,7 @@ abstract class WP_REST_Meta_Controller extends WP_REST_Controller {
 	 * @return WP_REST_Request|WP_Error Meta object data on success, WP_Error otherwise
 	 */
 	public function get_item( $request ) {
+
 		$parent_id = (int) $request['parent_id'];
 		$mid = (int) $request['id'];
 
@@ -218,28 +249,13 @@ abstract class WP_REST_Meta_Controller extends WP_REST_Controller {
 	 * @return WP_REST_Response|WP_Error Meta object data on success, WP_Error otherwise
 	 */
 	public function prepare_item_for_response( $data, $request, $is_raw = false ) {
-		$id_column = $this->get_id_column();
-		$id        = $data->$id_column;
-		$key       = $data->meta_key;
-		$value     = $data->meta_value;
 
-		// Don't expose protected fields.
-		if ( is_protected_meta( $key ) ) {
-			return new WP_Error( 'rest_meta_protected', sprintf( __( '%s is marked as a protected field.' ), $key ), array( 'status' => 403 ) );
-		}
+		error_log( print_r( $data, true ), 0 );
 
-		// Normalize serialized strings
-		if ( $is_raw && is_serialized_string( $value ) ) {
-			$value = unserialize( $value );
-		}
-
-		// Don't expose serialized data
-		if ( is_serialized( $value ) || ! is_string( $value ) ) {
-			return new WP_Error( 'rest_meta_protected', sprintf( __( '%s contains serialized data.' ), $key ), array( 'status' => 403 ) );
-		}
+		$key       = $data['meta_key'];
+		$value     = $data['meta_value'];
 
 		$meta = array(
-			'id'    => (int) $id,
 			'key'   => $key,
 			'value' => $value,
 		);
@@ -464,5 +480,53 @@ abstract class WP_REST_Meta_Controller extends WP_REST_Controller {
 		do_action( 'rest_delete_meta', $request );
 
 		return rest_ensure_response( array( 'message' => __( 'Deleted meta' ) ) );
+	}
+
+	/**
+	 * Check if we can read the meta. This does not account for context, so show everything that can possibly be shown, I think.
+	 *
+	 * @param string $key The meta key.
+	 * @param array $value The registered key data array.
+	 * @return boolean Can we read it?
+	 */
+	public function check_read_permission( $meta_data_array ){
+
+		$parent = get_post( $meta_data_array['parent_id'] );
+
+		$meta_key = $meta_data_array['meta_key'];
+		$meta_value_array = $meta_data_array['meta_value'];
+		$registered_key_data = $meta_data_array['registered_key_data'];
+
+		// if you can't read the parent object, you can't read this
+		if( empty( $meta_key ) || empty( $parent ) || ! $this->parent_controller->check_read_permission( $parent ) ){
+			return false;
+		}
+
+		foreach( $meta_value_array as $meta_value ){
+			// For now, no serialized data 
+			// Normalize serialized strings
+			if ( $is_raw && is_serialized_string( $meta_value) ) {
+				$meta_value = unserialize( $meta_value);
+			}
+	
+			// Don't expose serialized data
+			if ( is_serialized( $meta_value) || ! is_string( $meta_value) ) {
+
+				return false;
+			}
+		}
+
+		// Don't show protected meta unless it's been explicitly registered to show_in_rest
+		if( empty( $registered_key_data['show_in_rest'] ) && is_protected_meta( $meta_key ) ){
+			error_log( 'show in rest permission fails', 0 );
+			return false;
+		}
+
+		return true;
+	}
+
+	protected function check_update_permission( $meta_data_array ){
+		
+
 	}
 }
