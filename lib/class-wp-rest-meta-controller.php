@@ -167,7 +167,6 @@ abstract class WP_REST_Meta_Controller extends WP_REST_Controller {
 		// currently using this patch https://core.trac.wordpress.org/attachment/ticket/35658/35658.diff
 		
 		$registered_keys = get_registered_meta_keys( $this->parent_type, $this->parent_post_type );
-		//error_log( print_r( $registered_keys, true ), 0 );
 
 		$meta = array();
 
@@ -250,19 +249,27 @@ abstract class WP_REST_Meta_Controller extends WP_REST_Controller {
 	 */
 	public function prepare_item_for_response( $data, $request, $is_raw = false ) {
 
-		error_log( print_r( $data, true ), 0 );
-
-		$key       = $data['meta_key'];
-		$value     = $data['meta_value'];
+		$key       	= $data['meta_key'];
+		$value     	= $data['meta_value'];
+		$parent_id 	= $data['parent_id'];
+		$type 		= $data['registered_key_data']['type'];
+		$description	= $data['registered_key_data']['description'];
 
 		$meta = array(
 			'key'   => $key,
 			'value' => $value,
+			'type' 	=> $type,
+			'description' => $description
 		);
 
 		$response = rest_ensure_response( $meta );
 		$parent_column = $this->get_parent_column();
-		$response->add_link( 'about', rest_url( $this->namespace . '/' . $this->parent_base . '/' . $data->$parent_column ), array( 'embeddable' => true ) );
+
+		$response->add_link( 'self', rest_url( $this->namespace . '/' . $this->parent_base . '/' . $parent_id . '/' . $key ) );
+		$response->add_link( 'collection', rest_url( $this->namespace . '/' . $this->parent_base . '/' . $parent_id . '/' . 'meta' ) );
+		$response->add_link( 'about', rest_url( $this->namespace . '/' . $this->parent_base . '/' . $parent_id ), array( 'embeddable' => true ) );
+
+
 
 		/**
 		 * Filter a meta value returned from the API.
@@ -496,6 +503,7 @@ abstract class WP_REST_Meta_Controller extends WP_REST_Controller {
 		$meta_key = $meta_data_array['meta_key'];
 		$meta_value_array = $meta_data_array['meta_value'];
 		$registered_key_data = $meta_data_array['registered_key_data'];
+		$is_raw = $meta_data_array['is_raw'];
 
 		// if you can't read the parent object, you can't read this
 		if( empty( $meta_key ) || empty( $parent ) || ! $this->parent_controller->check_read_permission( $parent ) ){
@@ -518,7 +526,6 @@ abstract class WP_REST_Meta_Controller extends WP_REST_Controller {
 
 		// Don't show protected meta unless it's been explicitly registered to show_in_rest
 		if( empty( $registered_key_data['show_in_rest'] ) && is_protected_meta( $meta_key ) ){
-			error_log( 'show in rest permission fails', 0 );
 			return false;
 		}
 
