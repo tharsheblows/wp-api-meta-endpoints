@@ -76,6 +76,10 @@ abstract class WP_REST_Meta_Controller extends WP_REST_Controller {
 						'default'     => false,
 						'description' => __( 'Required to be true, as resource does not support trashing.' ),
 					),
+					'delete_all' => array(
+						'default'	  => false,
+						'description' => __( 'Whether to delete matching metadata entries for all objects, ignoring the specified object_id.')
+					)
 				),
 			),
 
@@ -97,15 +101,10 @@ abstract class WP_REST_Meta_Controller extends WP_REST_Controller {
 			 * Base properties for every meta key.
 			 */
 			'properties' => array(
-				'id' => array(
-					'description' => __( 'Unique identifier for the object.' ),
-					'type'        => 'integer',
-					'context'     => array( 'view', 'edit' ),
-					'readonly'    => true,
-				),
 				'key' => array(
 					'description' => __( 'The key for the custom field.' ),
 					'type'        => 'string',
+					'enum'		  => array_keys( get_registered_meta_keys( $this->parent_type, $this->parent_post_type ) ),
 					'context'     => array( 'view', 'edit' ),
 					'required'    => true,
 					'arg_options' => array(
@@ -114,7 +113,7 @@ abstract class WP_REST_Meta_Controller extends WP_REST_Controller {
 				),
 				'value' => array(
 					'description' => __( 'The value of the custom field.' ),
-					'type'        => 'string', // @todo this should be the data_type from register_meta
+					//'type'        => array( 'enum' => array( 'string', 'array', 'object' ) ), // @todo this should be the data_type from register_meta
 					'context'     => array( 'view', 'edit' ),
 				),
 
@@ -506,7 +505,7 @@ abstract class WP_REST_Meta_Controller extends WP_REST_Controller {
 		$is_raw = $meta_data_array['is_raw'];
 
 		// if you can't read the parent object, you can't read this
-		if( empty( $meta_key ) || empty( $parent ) || ! $this->parent_controller->check_read_permission( $parent ) ){
+		if( empty( $meta_value_array ) || empty( $meta_key ) || empty( $parent ) || ! $this->parent_controller->check_read_permission( $parent ) ){
 			return false;
 		}
 
@@ -535,5 +534,15 @@ abstract class WP_REST_Meta_Controller extends WP_REST_Controller {
 	protected function check_update_permission( $meta_data_array ){
 		
 
+	}
+
+	/**
+	 * Get the query params for collections
+	 *
+	 * @return array
+	 */
+	public function get_collection_params() {
+		$params = parent::get_collection_params();
+		return $params;
 	}
 }

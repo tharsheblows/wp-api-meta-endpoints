@@ -181,6 +181,4 @@ class WP_REST_Meta_Posts_Controller extends WP_REST_Meta_Controller {
 		return false;
 	}
 
-
-
 }
