@@ -48,6 +48,10 @@ class WP_REST_Meta_Posts_Controller extends WP_REST_Meta_Controller {
 		return $post;
 	}
 
+	public function get_object_registered_meta_keys(){
+		return get_registered_meta_keys( $this->parent_type, $this->parent_post_type );
+	}
+
 	/**
 	 * Check if a given request has access to get meta for a post.
 	 *
