@@ -52,20 +52,20 @@ abstract class WP_REST_Meta_Controller extends WP_REST_Controller {
 
 			'schema' => array( $this, 'get_public_item_schema' ),
 		) );
-		register_rest_route( $this->namespace, '/' . $this->parent_base . '/(?P<parent_id>[\d]+)/' . $this->rest_base . '/(?P<id>[\d]+)', array(
+		register_rest_route( $this->namespace, '/' . $this->parent_base . '/(?P<parent_id>[\d]+)/' . $this->rest_base . '/(?P<key>[\w-]+)', array(
 			array(
 				'methods'             => WP_REST_Server::READABLE,
 				'callback'            => array( $this, 'get_item' ),
 				'permission_callback' => array( $this, 'get_item_permissions_check' ),
 				'args'                => array(
-					'context'          => $this->get_context_param( array( 'default' => 'view' ) ),
+					'context'          => 'view',
 				),
 			),
 			array(
 				'methods'             => WP_REST_Server::EDITABLE,
 				'callback'            => array( $this, 'update_item' ),
 				'permission_callback' => array( $this, 'update_item_permissions_check' ),
-				'args'                => $this->get_endpoint_args_for_item_schema( false ),
+				'args'                => $this->get_endpoint_args_for_item_schema( WP_REST_Server::EDITABLE ),
 			),
 			array(
 				'methods'             => WP_REST_Server::DELETABLE,
@@ -92,7 +92,7 @@ abstract class WP_REST_Meta_Controller extends WP_REST_Controller {
 	 *
 	 * @return array
 	 */
-	public function get_item_schema() {
+	public function get_update_item_schema() {
 
 		$registered_meta_key_data = $this->get_object_registered_meta_keys();
 
@@ -126,6 +126,71 @@ abstract class WP_REST_Meta_Controller extends WP_REST_Controller {
 		return $this->add_additional_fields_schema( $schema ); // @todo see what happens here. If it's bad things, then use $this->get_public_item_schema
 	}
 
+	/**
+	 * Get the meta schema, conforming to JSON Schema
+	 *
+	 * @return array
+	 */
+	public function get_item_schema() {
+
+		$registered_meta_key_data = $this->get_object_registered_meta_keys();
+
+		$meta_key_properties = array();
+
+		$schema = array(
+			'$schema'    => 'http://json-schema.org/draft-04/schema#',
+			'title'      => 'meta',
+			'type'       => 'object',
+			/*
+			 * Base properties for every Post
+			 */
+			'properties' => array(
+				'key' => array(
+					'description' => __( 'The key for the custom field.' ),
+					'type'        => 'string',
+					'context'     => array( 'edit' ),
+					'required'    => true,
+				),
+				'value' => array(
+					'description' => __( 'The value of the custom field.' ),
+					'context'     => array( 'edit' ),
+				),
+				'registered_meta_data' => array(
+					'description'	=> __( 'Used to register the new meta key.' ),
+					'type'			=> 'array',
+					'context'		=> array( 'edit' ),
+					'required'		=> true,
+					'properties'	=> array(
+						'data_type'	=> array(
+							'description'	=> __( 'Used to sanitize and validate the meta value.' ),
+							'context'		=> array( 'edit' ),
+							'required'		=> false
+						),
+						'sanitize_callback'	=> array(
+							'description' 		=> __( 'Custom sanitization callback.' ), // @todo use WP functions? how does this work?
+							'context'			=> array( 'edit' ),
+							'type'				=> 'string',
+							'required'			=> false
+						),
+						'auth_callback'		=> array(
+							'description'		=> __( 'Custom authorization callback.' ), // @todo again, use WP functions? how does this work?
+							'context'			=> array( 'edit' ),
+							'type'				=> 'string',
+							'required'			=> false
+						),
+						'description'	=> array(
+							'description'	=> __( 'The description of the meta key.' ),
+							'context'		=> array( 'edit' ),
+							'type'			=> 'string',
+							'required'		=> false
+						)
+					)
+				)
+			),
+		);
+		return $this->add_additional_fields_schema( $schema ); // @todo see what happens here. If it's bad things, then use $this->get_public_item_schema
+	}
+
 	public function get_object_registered_meta_keys(){
 		return get_registered_meta_keys( $this->parent_type );
 	}
@@ -142,7 +207,13 @@ abstract class WP_REST_Meta_Controller extends WP_REST_Controller {
 	 */
 	public function get_endpoint_args_for_item_schema( $method = WP_REST_Server::CREATABLE ) {
 
-		$schema                = $this->get_item_schema();
+		
+		if( WP_REST_Server::CREATABLE === $method ){
+			$endpoint_args = parent::get_endpoint_args_for_item_schema( $method = WP_REST_Server::CREATABLE );
+			return $endpoint_args;
+		}
+
+		$schema                = $this->get_update_item_schema();
 
 		$schema_properties     = ! empty( $schema['properties'] ) ? $schema['properties'] : array();
 		$endpoint_args = array();
@@ -270,21 +341,43 @@ abstract class WP_REST_Meta_Controller extends WP_REST_Controller {
 	 */
 	public function get_item( $request ) {
 
+		$key = (string) $request['key'];
 		$parent_id = (int) $request['parent_id'];
-		$mid = (int) $request['id'];
 
-		$parent_column = $this->get_parent_column();
-		$meta = get_metadata_by_mid( $this->parent_type, $mid );
+		$registered_key_data = get_registered_meta_keys( $this->parent_type, $this->parent_post_type );
 
-		if ( empty( $meta ) ) {
-			return new WP_Error( 'rest_meta_invalid_id', __( 'Invalid meta id.' ), array( 'status' => 404 ) );
+		if( empty( $registered_key_data[ $key ]) ){
+			return new WP_Error( 'rest_meta_invalid_key', __( 'Invalid meta key.' ), array( 'status' => 404 ) );
 		}
 
-		if ( absint( $meta->$parent_column ) !== $parent_id ) {
-			return new WP_Error( 'rest_meta_' . $this->parent_type . '_mismatch', __( 'Meta does not belong to this object' ), array( 'status' => 400 ) );
+		$single = ( !empty( $registered_key_data['single'] ) ) ? $registered_key_data['single'] : false;
+		$meta_value = get_metadata( $this->parent_type, $parent_id, $key, $single );
+
+		// let's put it all together
+		$meta_data_array = array( 
+			'meta_key' => $key,
+			'parent_id' => $parent_id,
+			'meta_value' => $meta_value, // @todo think this through about single and arrays and serialized data
+			'registered_key_data' => $registered_key_data[ $key ],
+			'is_raw' => true, // have we checked for serialized data?
+		);
+
+		// if this not the edit context and the meta isn't registered to show in rest then error
+		if( 'edit' !== $request['context'] && ( empty( $registered_key_data[$key] ) || empty( $registered_key_data[$key]['show_in_rest'] ) ) ){
+			return new WP_Error( 'rest_meta_not_shown', __( 'This meta is not public.' ), array( 'status' => 404 ) );
 		}
 
-		return $this->prepare_item_for_response( $meta, $request );
+		$authorization_callback = ( !empty( $registered_key_data[ 'authorization_callback' ] ) && is_callable( $registered_key_data[$key][ 'authorization_callback' ] ) ) ? call_user_func( $registered_key_data[ 'authorization_callback' ] ) : $this->check_update_permission( $meta_data_array );
+
+		if( 'edit' === $request['context']  && ! $authorization_callback ){
+			return new WP_Error( 'rest_forbidden_context', __( 'Sorry, you are not allowed to view the post meta in this context.' ), array( 'status' => rest_authorization_required_code() ) );
+		}
+	
+		if( ! $this->check_read_permission( $meta_data_array ) ){
+			return new WP_Error( 'rest_meta_cannot_read', __( 'You do not have permission to read this meta.' ), array( 'status' => 404 ) );
+		} 
+		
+		return $this->prepare_item_for_response( $meta_data_array, $request );
 	}
 
 	/**
@@ -337,7 +430,7 @@ abstract class WP_REST_Meta_Controller extends WP_REST_Controller {
 		$parent_id = (int) $request['parent_id'];
 		$mid = (int) $request['id'];
 
-		$parent_column = $this->get_parent_column();
+		//$parent_column = $this->get_parent_column();
 		$current = get_metadata_by_mid( $this->parent_type, $mid );
 
 		if ( empty( $current ) ) {
@@ -591,21 +684,6 @@ abstract class WP_REST_Meta_Controller extends WP_REST_Controller {
 	public function get_collection_params() {
 		
 		$params = parent::get_collection_params();
-
-		$registered_meta_keys = $this->get_object_registered_meta_keys();
-
-		foreach ( $registered_meta_keys as $key => $registered_key_data ) {
-
-			$params[ $key ][ 'key' ][ 'type' ] = 'string';
-			$params[ $key ][ 'value' ][ 'type' ] = ( !empty( $registered_key_data['type'] ) ) ? $registered_key_data['type'] : 'string';
-
-			if ( isset( $registered_key_data[ 'description' ] ) ) {
-				$params[ $key ][ 'description' ] = $registered_key_data[ 'description' ];
-			}
-
-		}
-
-		error_log( print_r( $params, true ), 0 ); // it would be nice to have key and value in the 
 		return $params;
 	}
 }
