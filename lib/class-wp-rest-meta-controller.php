@@ -29,7 +29,6 @@ abstract class WP_REST_Meta_Controller extends WP_REST_Controller {
 			_doing_it_wrong( 'WP_REST_Meta_Controller::__construct', __( 'The parent base must be overridden' ), 'WPAPI-2.0' );
 			return;
 		}
-
 	}
 
 	/**
@@ -51,14 +50,17 @@ abstract class WP_REST_Meta_Controller extends WP_REST_Controller {
 			),
 
 			'schema' => array( $this, 'get_public_item_schema' ),
-		) );
+		), true );
 		register_rest_route( $this->namespace, '/' . $this->parent_base . '/(?P<parent_id>[\d]+)/' . $this->rest_base . '/(?P<key>[\w-]+)', array(
 			array(
 				'methods'             => WP_REST_Server::READABLE,
 				'callback'            => array( $this, 'get_item' ),
 				'permission_callback' => array( $this, 'get_item_permissions_check' ),
 				'args'                => array(
-					'context'          => 'view',
+					'context'         => array( 
+						'default' 		=> 'view',
+						'enum'			=> array( 'view', 'edit' )
+					)
 				),
 			),
 			array(
@@ -84,7 +86,7 @@ abstract class WP_REST_Meta_Controller extends WP_REST_Controller {
 			),
 
 			'schema' => array( $this, 'get_public_item_schema' ),
-		) );
+		), true );
 	}
 
 	/**
@@ -133,10 +135,6 @@ abstract class WP_REST_Meta_Controller extends WP_REST_Controller {
 	 */
 	public function get_item_schema() {
 
-		$registered_meta_key_data = $this->get_object_registered_meta_keys();
-
-		$meta_key_properties = array();
-
 		$schema = array(
 			'$schema'    => 'http://json-schema.org/draft-04/schema#',
 			'title'      => 'meta',
@@ -148,42 +146,45 @@ abstract class WP_REST_Meta_Controller extends WP_REST_Controller {
 				'key' => array(
 					'description' => __( 'The key for the custom field.' ),
 					'type'        => 'string',
-					'context'     => array( 'edit' ),
+					'context'     => array( 'view', 'edit' ),
 					'required'    => true,
 				),
 				'value' => array(
 					'description' => __( 'The value of the custom field.' ),
-					'context'     => array( 'edit' ),
+					'context'     => array( 'view', 'edit' ),
+					'required'	  => true,
+					'type'		  => 'meta_value' // there has to be a type here
 				),
-				'registered_meta_data' => array(
+				'register_meta_data' => array(
 					'description'	=> __( 'Used to register the new meta key.' ),
 					'type'			=> 'array',
-					'context'		=> array( 'edit' ),
+					'context'		=> array( 'view', 'edit' ),
 					'required'		=> true,
+					'arg_options'	=> array( 'sanitize_callback' => array( $this, 'sanitize_register_meta_callback' ) ),
 					'properties'	=> array(
 						'data_type'	=> array(
 							'description'	=> __( 'Used to sanitize and validate the meta value.' ),
-							'context'		=> array( 'edit' ),
+							'context'		=> array( 'view', 'edit' ),
 							'required'		=> false
 						),
 						'sanitize_callback'	=> array(
 							'description' 		=> __( 'Custom sanitization callback.' ), // @todo use WP functions? how does this work?
-							'context'			=> array( 'edit' ),
+							'context'			=> array( 'view', 'edit' ),
 							'type'				=> 'string',
 							'required'			=> false
 						),
 						'auth_callback'		=> array(
 							'description'		=> __( 'Custom authorization callback.' ), // @todo again, use WP functions? how does this work?
-							'context'			=> array( 'edit' ),
+							'context'			=> array( 'view', 'edit' ),
 							'type'				=> 'string',
 							'required'			=> false
 						),
 						'description'	=> array(
 							'description'	=> __( 'The description of the meta key.' ),
-							'context'		=> array( 'edit' ),
+							'context'		=> array( 'view', 'edit' ),
 							'type'			=> 'string',
 							'required'		=> false
-						)
+						),
 					)
 				)
 			),
@@ -191,79 +192,27 @@ abstract class WP_REST_Meta_Controller extends WP_REST_Controller {
 		return $this->add_additional_fields_schema( $schema ); // @todo see what happens here. If it's bad things, then use $this->get_public_item_schema
 	}
 
-	public function get_object_registered_meta_keys(){
-		return get_registered_meta_keys( $this->parent_type );
+	public function sanitize_register_meta_callback( $value ){
+
+		$args = array();
+
+		foreach( $value as $arg_key => $arg_value ){
+			if( ! is_array( $arg_value ) ){
+				$args[ $arg_key ] = sanitize_text_field( $arg_value );
+			}
+			elseif( 'show_in_rest' === $arg_key ){
+				$args[ $arg_key ] = (bool)$arg_value;
+			}
+			else{
+				$args[ $arg_key ] = $this->sanitize_register_meta_callback( $arg_value );
+			}
+		}
+
+		return $args;
 	}
 
-	/**
-	 * Get an array of endpoint arguments from the item schema for the controller.
-	 *
-	 * @param string $method HTTP method of the request. The arguments
-	 *                       for `CREATABLE` requests are checked for required
-	 *                       values and may fall-back to a given default, this
-	 *                       is not done on `EDITABLE` requests. Default is
-	 *                       WP_REST_Server::CREATABLE.
-	 * @return array $endpoint_args
-	 */
-	public function get_endpoint_args_for_item_schema( $method = WP_REST_Server::CREATABLE ) {
-
-		
-		if( WP_REST_Server::CREATABLE === $method ){
-			$endpoint_args = parent::get_endpoint_args_for_item_schema( $method = WP_REST_Server::CREATABLE );
-			return $endpoint_args;
-		}
-
-		$schema                = $this->get_update_item_schema();
-
-		$schema_properties     = ! empty( $schema['properties'] ) ? $schema['properties'] : array();
-		$endpoint_args = array();
-
-		foreach ( $schema_properties as $key => $params ) {
-
-			if( empty( $param_props = $params['properties'] ) ){
-				continue;
-			}
-			// Arguments specified as `readonly` are not allowed to be set.
-			if ( ! empty( $param_props['readonly'] ) ) {
-				continue;
-			}
-
-			$endpoint_args[ $key ] = array(
-				'validate_callback' => 'rest_validate_request_arg',
-				'sanitize_callback' => 'rest_sanitize_request_arg',
-			);
-
-			if ( WP_REST_Server::CREATABLE === $method && isset( $param_props['default'] ) ) {
-				$endpoint_args[ $key ]['default'] = $param_props['default'];
-			}
-
-			if ( WP_REST_Server::CREATABLE === $method && ! empty( $param_props['required'] ) ) {
-				$endpoint_args[ $key ]['required'] = true;
-			}
-
-			foreach( array( 'key', 'value' ) as $schema_prop ) {
-				$endpoint_args[ $key ][ $schema_prop ] = ( isset( $schema_prop ) ) ? array( 'type' => $param_props[ $schema_prop ][ 'type' ] ) : 'string';
-			}
-
-			$endpoint_args[$key]['test'] = 'yay';
-
-			if ( isset( $param_props[ 'description' ] ) ) {
-				$endpoint_args[ $key ][ 'description' ] = $param_props[ 'description' ];
-			}
-
-			// Merge in any options provided by the schema property.
-			if ( isset( $param_props['arg_options'] ) ) {
-
-				// Only use required / default from arg_options on CREATABLE endpoints.
-				if ( WP_REST_Server::CREATABLE !== $method ) {
-					$param_props['arg_options'] = array_diff_key( $param_props['arg_options'], array( 'required' => '', 'default' => '' ) );
-				}
-
-				$endpoint_args[ $key ] = array_merge( $endpoint_args[ $key ], $param_props['arg_options'] );
-			}
-		}
-
-		return $endpoint_args;
+	public function get_object_registered_meta_keys(){
+		return get_registered_meta_keys( $this->parent_type );
 	}
 
 	/**
@@ -327,7 +276,7 @@ abstract class WP_REST_Meta_Controller extends WP_REST_Controller {
 				continue;
 			}
 
-			$meta[$key] = $this->prepare_response_for_collection( $response );
+			$meta[] = $this->prepare_response_for_collection( $response );
 		}
 
 		return rest_ensure_response( $meta );
@@ -510,44 +459,19 @@ abstract class WP_REST_Meta_Controller extends WP_REST_Controller {
 	}
 
 	/**
-	 * Check if the data provided is valid data.
-	 *
-	 * Excludes serialized data from being sent via the API.
-	 *
-	 * @see https://github.com/WP-API/WP-API/pull/68
-	 * @param mixed $data Data to be checked
-	 * @return boolean Whether the data is valid or not
-	 */
-	protected function is_valid_meta_data( $data ) {
-		if ( is_array( $data ) || is_object( $data ) || is_serialized( $data ) ) {
-			return false;
-		}
-
-		return true;
-	}
-
-	/**
 	 * Add meta to an object.
 	 *
 	 * @param WP_REST_Request $request
 	 * @return WP_REST_Response|WP_Error
 	 */
 	public function create_item( $request ) {
+
+		$this->prepare_item_for_database( $request );
+
 		$parent_id = (int) $request['parent_id'];
-
-		if ( ! $this->is_valid_meta_data( $request['value'] ) ) {
-			$code = ( $this->parent_type === 'post' ) ? 'rest_post_invalid_action' : 'rest_meta_invalid_action';
-
-			// for now let's not allow updating of arrays, objects or serialized values.
-			return new WP_Error( $code, __( 'Invalid provided meta data for action.' ), array( 'status' => 400 ) );
-		}
 
 		if ( empty( $request['key'] ) ) {
 			return new WP_Error( 'rest_meta_invalid_key', __( 'Invalid meta key.' ), array( 'status' => 400 ) );
-		}
-
-		if ( is_protected_meta( $request['key'] ) ) {
-			return new WP_Error( 'rest_meta_protected', sprintf( __( '%s is marked as a protected field.' ), $request['key'] ), array( 'status' => 403 ) );
 		}
 
 		$meta_key = wp_slash( $request['key'] );
@@ -566,6 +490,7 @@ abstract class WP_REST_Meta_Controller extends WP_REST_Controller {
 		) );
 		$response = rest_ensure_response( $this->get_item( $request ) );
 
+		//error_log( print_r( $response, true ), 0 );
 		$response->set_status( 201 );
 		$data = $response->get_data();
 		$response->header( 'Location', rest_url( $this->namespace . '/' . $this->parent_base . '/' . $parent_id . '/meta/' . $data['id'] ) );
@@ -592,7 +517,7 @@ abstract class WP_REST_Meta_Controller extends WP_REST_Controller {
 			return new WP_Error( 'rest_trash_not_supported', __( 'Meta does not support trashing.' ), array( 'status' => 501 ) );
 		}
 
-		$parent_column = $this->get_parent_column();
+		$parent_column = 10770;
 		$current = get_metadata_by_mid( $this->parent_type, $mid );
 
 		if ( empty( $current ) ) {
@@ -625,6 +550,43 @@ abstract class WP_REST_Meta_Controller extends WP_REST_Controller {
 		do_action( 'rest_delete_meta', $request );
 
 		return rest_ensure_response( array( 'message' => __( 'Deleted meta' ) ) );
+	}
+
+	/**
+	 * Prepare a single meta for create or update.
+	 *
+	 * @param WP_REST_Request $request Request object.
+	 * @return WP_Error|object $prepared_post Post object.
+	 */
+	protected function prepare_item_for_database( $request ){
+		//error_log( print_r( $request, true ), 0 );
+		//
+		
+		$schema->get_item_schema();
+
+		// the meta value has not yet been sanitized. Let's do that now.
+		
+		if( ! empty( $schema['properties']['key'] ) && isset( $request['key'] ) ){
+			$meta_key = esc_attr( $request['key'] ); // 
+		}
+		else{
+			return new WP_Error( 'rest_meta_no_key', __( 'You must have a meta key.' ), array( 'status' => 400 ) );
+		}
+
+		if( ! empty( $schema['properties']['register_meta_data'] ) && isset( $request['register_meta_data'] ) && is_array( $request['register_meta_data'] ) ){
+			$register_meta_data = $request['register_meta_data']; // this has already been sanitized, yes? It's not going in the database, it's being used to sanitize the value
+		}
+		else{
+			return new WP_Error( 'rest_meta_no_register_meta_data', __( 'You must have registered meta data for this key.' ), array( 'status' => 400 ) );
+		}
+		
+		if( ! empty( $schema['properties']['key'] ) && isset( $request['key'] ) ){
+			$meta_key = esc_attr( $request['key'] ); // 
+		}
+		else{
+			return new WP_Error( 'rest_meta_no_key', __( 'You must have a meta key.' ), array( 'status' => 400 ) );
+		}
+		
 	}
 
 	/**
@@ -684,6 +646,8 @@ abstract class WP_REST_Meta_Controller extends WP_REST_Controller {
 	public function get_collection_params() {
 		
 		$params = parent::get_collection_params();
+		$params['context']['default'] = 'view';
+		$params['context']['enum'] = array( 'view', 'edit' );
 		return $params;
 	}
 }

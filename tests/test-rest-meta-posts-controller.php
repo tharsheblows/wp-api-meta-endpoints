@@ -32,10 +32,10 @@ class WP_Test_REST_Meta_Posts_Controller extends WP_Test_REST_Controller_Testcas
 		$response = $this->server->dispatch( $request );
 		$data = $response->get_data();
 		$this->assertEquals( 'view', $data['endpoints'][0]['args']['context']['default'] );
-		$this->assertEquals( array( 'view' ), $data['endpoints'][0]['args']['context']['enum'] );
+		$this->assertEquals( array( 'view', 'edit' ), $data['endpoints'][0]['args']['context']['enum'] );
 		// Single
 		$meta_id_basic = add_post_meta( $post_id, 'testkey', 'testvalue' );
-		$request = new WP_REST_Request( 'OPTIONS', '/wp/v2/posts/' . $post_id . '/meta/' . $meta_id_basic );
+		$request = new WP_REST_Request( 'OPTIONS', '/wp/v2/posts/' . $post_id . '/meta/testkey' );
 		$response = $this->server->dispatch( $request );
 		$data = $response->get_data();
 		$this->assertEquals( 'view', $data['endpoints'][0]['args']['context']['default'] );
@@ -94,15 +94,16 @@ class WP_Test_REST_Meta_Posts_Controller extends WP_Test_REST_Controller_Testcas
 		// No-op
 	}
 
+	// this should fail if no register_meta
 	public function test_prepare_item() {
 		$post_id = $this->factory->post->create();
 		$meta_id = add_post_meta( $post_id, 'testkey', 'testvalue' );
 
-		$request = new WP_REST_Request( 'GET', sprintf( '/wp/v2/posts/%d/meta/%d', $post_id, $meta_id ) );
+		$request = new WP_REST_Request( 'GET', sprintf( '/wp/v2/posts/%d/meta/testkey', $post_id ) );
 		$response = $this->server->dispatch( $request );
 
 		$data = $response->get_data();
-		$this->assertEquals( $meta_id, $data['id'] );
+		error_log( print_r( $data, true ), 0 );
 		$this->assertEquals( 'testkey', $data['key'] );
 		$this->assertEquals( 'testvalue', $data['value'] );
 	}
@@ -111,14 +112,13 @@ class WP_Test_REST_Meta_Posts_Controller extends WP_Test_REST_Controller_Testcas
 		$post_id = $this->factory->post->create();
 		$meta_id = add_post_meta( $post_id, 'testkey', 'testvalue' );
 
-		$request = new WP_REST_Request( 'GET', sprintf( '/wp/v2/posts/%d/meta/%d', $post_id, $meta_id ) );
+		$request = new WP_REST_Request( 'GET', sprintf( '/wp/v2/posts/%d/meta/testkey', $post_id ) );
 
 		$response = $this->server->dispatch( $request );
 
 		$this->assertEquals( 200, $response->get_status() );
 
 		$data = $response->get_data();
-		$this->assertEquals( $meta_id, $data['id'] );
 		$this->assertEquals( 'testkey', $data['key'] );
 		$this->assertEquals( 'testvalue', $data['value'] );
 	}
@@ -128,7 +128,7 @@ class WP_Test_REST_Meta_Posts_Controller extends WP_Test_REST_Controller_Testcas
 		$meta_id = add_post_meta( $post_id, 'testkey', 'testvalue' );
 
 		// Use the real URL to ensure routing succeeds
-		$request = new WP_REST_Request( 'GET', sprintf( '/wp/v2/posts/%d/meta/%d', $post_id, $meta_id ) );
+		$request = new WP_REST_Request( 'GET', sprintf( '/wp/v2/posts/%d/meta/testkey', $post_id ) );
 		// Override the id parameter to ensure meta is checking it
 		$request['parent_id'] = 0;
 
