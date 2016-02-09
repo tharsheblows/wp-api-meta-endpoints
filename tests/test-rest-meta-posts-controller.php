@@ -103,7 +103,6 @@ class WP_Test_REST_Meta_Posts_Controller extends WP_Test_REST_Controller_Testcas
 		$response = $this->server->dispatch( $request );
 
 		$data = $response->get_data();
-		error_log( print_r( $data, true ), 0 );
 		$this->assertEquals( 'testkey', $data['key'] );
 		$this->assertEquals( 'testvalue', $data['value'] );
 	}

@@ -135,6 +135,8 @@ abstract class WP_REST_Meta_Controller extends WP_REST_Controller {
 	 */
 	public function get_item_schema() {
 
+		$registered_meta_keys = $this->get_object_registered_meta_keys();
+
 		$schema = array(
 			'$schema'    => 'http://json-schema.org/draft-04/schema#',
 			'title'      => 'meta',
@@ -148,6 +150,7 @@ abstract class WP_REST_Meta_Controller extends WP_REST_Controller {
 					'type'        => 'string',
 					'context'     => array( 'view', 'edit' ),
 					'required'    => true,
+					'enum'		  => $registered_meta_keys
 				),
 				'value' => array(
 					'description' => __( 'The value of the custom field.' ),
@@ -159,7 +162,7 @@ abstract class WP_REST_Meta_Controller extends WP_REST_Controller {
 					'description'	=> __( 'Used to register the new meta key.' ),
 					'type'			=> 'array',
 					'context'		=> array( 'view', 'edit' ),
-					'required'		=> true,
+					'required'		=> false,
 					'arg_options'	=> array( 'sanitize_callback' => array( $this, 'sanitize_register_meta_callback' ) ),
 					'properties'	=> array(
 						'data_type'	=> array(
@@ -376,11 +379,7 @@ abstract class WP_REST_Meta_Controller extends WP_REST_Controller {
 	 * @return WP_REST_Response|WP_Error
 	 */
 	public function update_item( $request ) {
-		$parent_id = (int) $request['parent_id'];
-		$mid = (int) $request['id'];
-
-		//$parent_column = $this->get_parent_column();
-		$current = get_metadata_by_mid( $this->parent_type, $mid );
+		$this->prepare_item_for_database( $request );
 
 		if ( empty( $current ) ) {
 			return new WP_Error( 'rest_meta_invalid_id', __( 'Invalid meta id.' ), array( 'status' => 404 ) );
@@ -477,23 +476,31 @@ abstract class WP_REST_Meta_Controller extends WP_REST_Controller {
 		$meta_key = wp_slash( $request['key'] );
 		$value    = wp_slash( $request['value'] );
 
-		$mid = add_metadata( $this->parent_type, $parent_id, $meta_key, $value );
-		if ( ! $mid ) {
-			return new WP_Error( 'rest_meta_could_not_add', __( 'Could not add meta.' ), array( 'status' => 400 ) );
-		}
+		// $meta_added = add_metadata( $this->parent_type, $parent_id, $meta_key, $value );
+		// if ( ! $meta_added ) {
+		// 	return new WP_Error( 'rest_meta_could_not_add', __( 'Could not add meta.' ), array( 'status' => 400 ) );
+		// }
+
+		$meta_data_defaults = array(
+			'show_in_rest' => true, 
+			'description' => 'This is the meta key description.', 
+		);
+
+		$meta_data_args = wp_parse_args( (array)$request['register_meta_data'], $meta_data_defaults );
+
+		register_meta( $this->parent_type, $meta_key, $meta_data_args ); //@todo be nice if this returned something?
 
 		$request = new WP_REST_Request( 'GET' );
 		$request->set_query_params( array(
 			'context'   => 'edit',
 			'parent_id' => $parent_id,
-			'id'        => $mid,
+			'key'        => $meta_key,
 		) );
 		$response = rest_ensure_response( $this->get_item( $request ) );
 
-		//error_log( print_r( $response, true ), 0 );
 		$response->set_status( 201 );
 		$data = $response->get_data();
-		$response->header( 'Location', rest_url( $this->namespace . '/' . $this->parent_base . '/' . $parent_id . '/meta/' . $data['id'] ) );
+		$response->header( 'Location', rest_url( $this->namespace . '/' . $this->parent_base . '/' . $parent_id . '/meta/' . $data['key'] ) );
 
 		/* This action is documented in lib/endpoints/class-wp-rest-meta-controller.php */
 		do_action( 'rest_insert_meta', $data, $request, true );
@@ -559,32 +566,38 @@ abstract class WP_REST_Meta_Controller extends WP_REST_Controller {
 	 * @return WP_Error|object $prepared_post Post object.
 	 */
 	protected function prepare_item_for_database( $request ){
-		//error_log( print_r( $request, true ), 0 );
-		//
 		
-		$schema->get_item_schema();
+		$schema = $this->get_item_schema();
+
+		error_log( print_r( $request, true ), 0 );
 
 		// the meta value has not yet been sanitized. Let's do that now.
 		
 		if( ! empty( $schema['properties']['key'] ) && isset( $request['key'] ) ){
-			$meta_key = esc_attr( $request['key'] ); // 
+			$key = esc_attr( $request['key'] ); // 
 		}
 		else{
 			return new WP_Error( 'rest_meta_no_key', __( 'You must have a meta key.' ), array( 'status' => 400 ) );
 		}
-
-		if( ! empty( $schema['properties']['register_meta_data'] ) && isset( $request['register_meta_data'] ) && is_array( $request['register_meta_data'] ) ){
-			$register_meta_data = $request['register_meta_data']; // this has already been sanitized, yes? It's not going in the database, it's being used to sanitize the value
+		if( ! empty( $register_meta_data =  get_registered_meta_keys( $this->parent_type, $this->parent_post_type )[ $key ] ) ){
+			
+			if( empty( $register_meta_data['show_in_rest'] ) ){
+				return new WP_Error( 'rest_meta_no_show', __( 'This meta data cannot be shown.' ), array( 'status' => 400 ) );
+			}
+			$register_meta_old_sanitize = $register_meta_data['old_sanitize_callback']; 
+			$register_meta_sanitize =  $register_meta_data['sanitize_callback']; 
+			$regiser_meta_type = $register_meta_data['type'];
 		}
 		else{
 			return new WP_Error( 'rest_meta_no_register_meta_data', __( 'You must have registered meta data for this key.' ), array( 'status' => 400 ) );
 		}
 		
-		if( ! empty( $schema['properties']['key'] ) && isset( $request['key'] ) ){
-			$meta_key = esc_attr( $request['key'] ); // 
+		if( ! empty( $schema['properties']['value'] ) && isset( $request['value'] ) ){
+			// This is where we sanitize the meta value
+
 		}
 		else{
-			return new WP_Error( 'rest_meta_no_key', __( 'You must have a meta key.' ), array( 'status' => 400 ) );
+			return new WP_Error( 'rest_meta_no_value', __( 'You must have a meta value.' ), array( 'status' => 400 ) );
 		}
 		
 	}
