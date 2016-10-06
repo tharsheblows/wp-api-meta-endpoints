@@ -144,7 +144,7 @@ abstract class WP_REST_Meta_Fields {
 	/**
 	 * Update multiple meta values for an object.
 	 *
-	 * Alters the list of values in the database to match the list of provided values.
+	 * Replace the list of values in the database to match the list of provided values.
 	 *
 	 * @param int $object Object ID.
 	 * @param string $name Key for the custom field.
@@ -161,20 +161,20 @@ abstract class WP_REST_Meta_Fields {
 		}
 
 		$current = get_metadata( $this->get_meta_type(), $object, $name, false );
-		$to_add = array_diff( $values, $current );
-		$to_remove = array_diff( $current, $values );
 
-		foreach ( $to_add as $value ) {
-			if ( ! add_metadata( $this->get_meta_type(), $object, wp_slash( $name ), wp_slash( $value ) ) ) {
-				return new WP_Error(
-					'rest_meta_database_error',
-					__( 'Could not update meta value in database.' ),
-					array( 'key' => $name, 'status' => WP_HTTP::INTERNAL_SERVER_ERROR )
-				);
-			}
+		if ( ! delete_metadata( $this->get_meta_type(), $object, wp_slash( $name ) ) ) {
+			error_log( 'to_remove as value has failed - value: ' . $value, 0 );
+			return new WP_Error(
+				'rest_meta_database_error',
+				__( 'Could not update meta value in database.' ),
+				array( 'key' => $name, 'status' => WP_HTTP::INTERNAL_SERVER_ERROR )
+			);
 		}
-		foreach ( $to_remove as $value ) {
-			if ( ! delete_metadata( $this->get_meta_type(), $object, wp_slash( $name ), wp_slash( $value ) ) ) {
+
+		foreach ( $values as $value ) {
+			error_log( $value );
+			if ( ! add_metadata( $this->get_meta_type(), $object, wp_slash( $name ), wp_slash( $value ) ) ) {
+				error_log( 'to_add as value has failed', 0 );
 				return new WP_Error(
 					'rest_meta_database_error',
 					__( 'Could not update meta value in database.' ),
