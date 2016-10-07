@@ -221,6 +221,11 @@ abstract class WP_REST_Meta_Fields {
 			);
 		}
 
+		// If the value is the same as is already there, it's ok.
+		if( $value === update_metadata( $this->get_meta_type(), $object, wp_slash( $name ), true ) ){
+			return true;
+		}
+
 		if ( ! update_metadata( $this->get_meta_type(), $object, wp_slash( $name ), wp_slash( $value ) ) ) {
 			return new WP_Error(
 				'rest_meta_database_error',
