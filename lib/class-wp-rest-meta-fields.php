@@ -171,7 +171,6 @@ abstract class WP_REST_Meta_Fields {
 
 			$to_add = ( !empty( $current_count[$value] ) ) ? $values_count[$value] - $current_count[$value] : $values_count[$value];
 			if( $to_add > 0 ){
-				error_log( "adding a " . $value, 0 );
 				for( $i = 0; $i < $to_add; $i++ ){
 					if ( ! add_metadata( $this->get_meta_type(), $object, wp_slash( $name ), wp_slash( $value ) ) ) {
 						return new WP_Error(
@@ -183,7 +182,6 @@ abstract class WP_REST_Meta_Fields {
 				}
 			}
 			elseif( $to_add < 0 ){
-				error_log( "deleting a " . $value );
 				// we necessarily have to delete all the values so now there are none of that value
 				if ( ! delete_metadata( $this->get_meta_type(), $object, wp_slash( $name ), wp_slash( $value ) ) ) {
 					return new WP_Error(
