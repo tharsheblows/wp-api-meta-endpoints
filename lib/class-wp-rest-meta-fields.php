@@ -162,51 +162,16 @@ abstract class WP_REST_Meta_Fields {
 
 		$current = get_metadata( $this->get_meta_type(), $object, $name, false );
 
-		$current_count = array_count_values( $current );
-		$values_count = array_count_values( $values );
-
-		$values_current_diff = array_diff_assoc( $values_count, $current_count );
-
-		foreach( $values_current_diff as $value => $count ){
-
-			$to_add = ( !empty( $current_count[$value] ) ) ? $values_count[$value] - $current_count[$value] : $values_count[$value];
-			if( $to_add > 0 ){
-				for( $i = 0; $i < $to_add; $i++ ){
-					if ( ! add_metadata( $this->get_meta_type(), $object, wp_slash( $name ), wp_slash( $value ) ) ) {
-						return new WP_Error(
-							'rest_meta_database_error',
-							__( 'Could not update meta value in database.' ),
-							array( 'key' => $name, 'status' => WP_HTTP::INTERNAL_SERVER_ERROR )
-						);
-					}
-				}
-			}
-			elseif( $to_add < 0 ){
-				// we necessarily have to delete all the values so now there are none of that value
-				if ( ! delete_metadata( $this->get_meta_type(), $object, wp_slash( $name ), wp_slash( $value ) ) ) {
-					return new WP_Error(
-						'rest_meta_database_error',
-						__( 'Could not update meta value in database.' ),
-						array( 'key' => $name, 'status' => WP_HTTP::INTERNAL_SERVER_ERROR )
-					);
-				}
-				// so now they're all gone and we need to know how many to add back in
-				for( $j = 0; $j < $values_count[$value]; $j++ ){
-					if ( ! add_metadata( $this->get_meta_type(), $object, wp_slash( $name ), wp_slash( $value ) ) ) {
-						return new WP_Error(
-							'rest_meta_database_error',
-							__( 'Could not update meta value in database.' ),
-							array( 'key' => $name, 'status' => WP_HTTP::INTERNAL_SERVER_ERROR )
-						);
-					}
-				}
-			}
+		if ( !empty( $current ) && ! delete_metadata( $this->get_meta_type(), $object, wp_slash( $name ) ) ) {
+			return new WP_Error(
+				'rest_meta_database_error',
+				__( 'Could not update meta value in database.' ),
+				array( 'key' => $name, 'status' => WP_HTTP::INTERNAL_SERVER_ERROR )
+			);
 		}
 
-		$to_remove = array_unique( array_diff( $current, $values ) );
-
-		foreach ( $to_remove as $value ) {
-			if ( ! delete_metadata( $this->get_meta_type(), $object, wp_slash( $name ), wp_slash( $value ) ) ) {
+		foreach ( $values as $value ) {
+			if ( ! add_metadata( $this->get_meta_type(), $object, wp_slash( $name ), wp_slash( $value ) ) ) {
 				return new WP_Error(
 					'rest_meta_database_error',
 					__( 'Could not update meta value in database.' ),
@@ -217,6 +182,7 @@ abstract class WP_REST_Meta_Fields {
 
 		return true;
 	}
+
 
 	/**
 	 * Update meta value for an object.
