@@ -141,10 +141,10 @@ abstract class WP_REST_Meta_Fields {
 		return true;
 	}
 
-	/**
+ /**
 	 * Update multiple meta values for an object.
 	 *
-	 * Alters the list of values in the database to match the list of provided values.
+	 * Replace the list of values in the database to match the list of provided values.
 	 *
 	 * @param int $object Object ID.
 	 * @param string $name Key for the custom field.
@@ -162,30 +162,41 @@ abstract class WP_REST_Meta_Fields {
 
 		$current = get_metadata( $this->get_meta_type(), $object, $name, false );
 
-		$to_remove = $current;
-		$to_add = $values;
-		foreach ( $to_add as $add_key => $value ) {
-			$remove_keys = array_keys( $to_remove, $value, true );
-			if ( $remove_keys === false ) {
-				continue;
-			}
 
-			if ( count( $remove_keys ) > 1 ) {
-				// To remove, we need to remove first, then add, so don't touch.
-				continue;
-			}
+		$current_count = array_count_values( $current );
+		$values_count = array_count_values( $values );
 
-			if( !empty( $remove_keys ) && !empty( $remove_keys[0] ) ){
-				$remove_key = $remove_keys[0];
-				unset( $to_remove[ $remove_key ] );
+		$to_remove = $to_add = array();
+		
+		foreach( $values_count as $value => $count ){
+
+			$number_to_add = ( !empty( $current_count[$value] ) ) ? $values_count[$value] - $current_count[$value] : $values_count[$value];
+			if( $number_to_add >= 0 ){
+
+				// only add in the difference
+				$to_add[ $value ] = $number_to_add;
+				// we've dealt with this, unset it
+				unset( $current_count[$value] );
 			}
-			unset( $to_add[ $add_key ] );
+			elseif( $number_to_add < 0 ){
+
+				// removing deletes all instances of the value, no need to count
+				$to_remove[$value] = 1; // this notation is simply to make it all a bit easier to  see and add in the leftover current value/counts
+				
+				// we've dealt with this, unset it
+				unset( $current_count[$value] ) ;  
+				
+				// add back in the number of values we need in total
+				$to_add[ $value ] = $count;
+
+			}
 		}
 
-		// `delete_metadata` removes _all_ instances of the value, so only call
-		// once.
-		$to_remove = array_unique( $to_remove );
-		foreach ( $to_remove as $value ) {
+		// now add in the current values which weren't accounted for in the values array
+		$to_remove = array_keys( array_merge( $to_remove, $current_count ) );
+
+		foreach( $to_remove as $value ){
+			// we necessarily have to delete all the values so now there are none of that value
 			if ( ! delete_metadata( $this->get_meta_type(), $object, wp_slash( $name ), wp_slash( $value ) ) ) {
 				return new WP_Error(
 					'rest_meta_database_error',
@@ -194,13 +205,16 @@ abstract class WP_REST_Meta_Fields {
 				);
 			}
 		}
-		foreach ( $to_add as $value ) {
-			if ( ! add_metadata( $this->get_meta_type(), $object, wp_slash( $name ), wp_slash( $value ) ) ) {
-				return new WP_Error(
-					'rest_meta_database_error',
-					__( 'Could not update meta value in database.' ),
-					array( 'key' => $name, 'status' => WP_HTTP::INTERNAL_SERVER_ERROR )
-				);
+		// so now they're all gone and we need to know how many to add back in
+		foreach( $to_add as $value => $count ){
+			for( $i = 0; $i < $count; $i++ ){
+				if ( ! add_metadata( $this->get_meta_type(), $object, wp_slash( $name ), wp_slash( $value ) ) ) {
+					return new WP_Error(
+						'rest_meta_database_error',
+						__( 'Could not update meta value in database.' ),
+						array( 'key' => $name, 'status' => WP_HTTP::INTERNAL_SERVER_ERROR )
+					);
+				}
 			}
 		}
 
