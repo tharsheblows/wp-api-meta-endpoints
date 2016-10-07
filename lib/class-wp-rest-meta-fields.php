@@ -175,8 +175,10 @@ abstract class WP_REST_Meta_Fields {
 				continue;
 			}
 
-			$remove_key = $remove_keys[0];
-			unset( $to_remove[ $remove_key ] );
+			if( !empty( $remove_keys ) && !empty( $remove_keys[0] ) ){
+				$remove_key = $remove_keys[0];
+				unset( $to_remove[ $remove_key ] );
+			}
 			unset( $to_add[ $add_key ] );
 		}
 
